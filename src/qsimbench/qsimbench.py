@@ -60,7 +60,7 @@ _SESSION.mount("http://", _HTTP_ADAPTER)
 # ---------------------------------------------------------------------------
 DEFAULT_DATASET_URL = os.getenv(
     "QSIMBENCH_DATASET",
-    "https://github.com/GBisi/qsimbench-dataset/raw/refs/heads/main/dataset"
+    "https://github.com/superceccho/qsimbench-dataset/raw/refs/heads/main/dataset"
 ).rstrip("/")
 DEFAULT_CACHE_DIR = Path(os.getenv(
     "QSIMBENCH_CACHE_DIR",
@@ -79,6 +79,12 @@ CACHE_TIMEOUT: int = DEFAULT_CACHE_TIMEOUT
 # Thread-safe cursor storage for sequential sampling
 _CURSORS: Dict[Tuple[str, int, str, str], int] = {}
 _CURSORS_LOCK = threading.RLock()
+
+resp=_SESSION.get(f"{DATASET_URL}/metadata.json")
+resp.raise_for_status()
+versions_list=json.loads(resp.text)
+oldest=versions_list[0]
+latest=versions_list[len(versions_list)-1]
 
 # ---------------------------------------------------------------------------
 # Configuration functions
@@ -171,13 +177,14 @@ def _download_and_cache(
     try:
         resp.raise_for_status()
     except requests.HTTPError as e:
-        raise QSimBenchError(f"HTTP error fetching {url}: {e}") from e
+        if e.response.status_code != 404:
+            raise QSimBenchError(f"HTTP error fetching {url}: {e}") from e
+        else:
+            return []
 
     records = [
         json.loads(line) for line in resp.text.splitlines() if line.strip()
     ]
-    if not records:
-        raise QSimBenchError(f"No records found at {url}")
 
     # Cache to disk
     cache_path.write_text("\n".join(json.dumps(r) for r in records))
@@ -189,6 +196,7 @@ def _get_data(
     algorithm: str,
     size: int,
     backend: str,
+    version: str,
     circuit_kind: str = "circuit",
     force: bool = False
 ) -> List[Dict[str, Any]]:
@@ -219,8 +227,8 @@ def _get_data(
     alg = algorithm.lower()
     be = backend.lower()
     file_name = f"{alg}_{size}_{be}.jsonl"
-    url = f"{DATASET_URL}/histories/{kind}/{file_name}"
-    cache_path = CACHE_DIR / kind / file_name
+    url = f"{DATASET_URL}/{version}/histories/{kind}/{file_name}"
+    cache_path = CACHE_DIR / version / kind / file_name
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Download & parse
@@ -239,6 +247,8 @@ def get_outcomes(
     *,
     exact: bool = True,
     strategy: str = "sequential",
+    oldest_version: str = oldest,
+    latest_version: str = latest,
     seed: Optional[int] = None,
     force: bool = False
 ) -> Dict[str, int]:
@@ -266,8 +276,19 @@ def get_outcomes(
         raise QSimBenchError("Parameter 'shots' must be > 0.")
     if strategy not in {"sequential", "random"}:
         raise QSimBenchError("strategy must be 'sequential' or 'random'.")
-
-    data = _get_data(algorithm, size, backend, circuit_kind, force)
+    
+    if oldest_version not in versions_list or latest_version not in versions_list:
+        raise QSimBenchError("Non-existent version(s)")
+    
+    old_index=versions_list.index(oldest_version)
+    latest_index=versions_list.index(latest_version)
+    if old_index > latest_index:
+        raise QSimBenchError("Versions must be ordered")
+    
+    data=[]
+    for i in range(old_index, latest_index+1):
+        new_data=_get_data(algorithm, size, backend, versions_list[i], circuit_kind, force)
+        data.extend(new_data)
     n = len(data)
     if n == 0:
         raise QSimBenchError("No records available to sample.")
@@ -323,7 +344,8 @@ def get_outcomes(
 @lru_cache()
 def get_index(
     circuit_kind: str = "circuit",
-    by_backend: bool = False
+    by_backend: bool = False,
+    version: str = latest
 ) -> Dict[str, Any]:
     """
     List available algorithms, sizes, and backends in the dataset (via GitHub API).
@@ -344,7 +366,7 @@ def get_index(
 
     # Convert raw URL → GitHub tree URL
     tree_url = DATASET_URL.replace("raw/refs/heads", "tree")
-    parsed = urlparse(tree_url + f"/histories/{kind}")
+    parsed = urlparse(tree_url + f"/{version}/histories/{kind}")
     parts = parsed.path.strip("/").split("/")
     if len(parts) < 5 or parts[2] != "tree":
         raise QSimBenchError(f"Unexpected URL pattern: {tree_url}")
@@ -381,15 +403,17 @@ def get_index(
 def get_metadata(
     algorithm: str,
     size: int,
-    backend: str
+    backend: str,
+    version: str = latest
 ) -> List[Any]:
     """
-    Fetch metadata JSON files for a given algorithm/size/backend.
+    Fetch metadata JSON files for a given algorithm/size/backend/version.
 
     Args:
         algorithm: Algorithm name.
         size: Problem size.
         backend: Backend name.
+        version: Dataset version
 
     Returns:
         List of parsed JSON metadata objects.
@@ -397,6 +421,10 @@ def get_metadata(
     Raises:
         QSimBenchError: On lookup or HTTP errors.
     """
+
+    if version not in versions_list:
+        raise QSimBenchError(f"Version {version} doesn't exist")
+
     tree_url = DATASET_URL.replace("raw/refs/heads", "tree")
     parsed = urlparse(tree_url)
     parts = parsed.path.strip("/").split("/")
@@ -406,7 +434,7 @@ def get_metadata(
     owner, repo, _, branch, *path_parts = parts
     contents_url = (
         f"https://api.github.com/repos/{owner}/{repo}/contents/"
-        f"{'/'.join(path_parts)}"
+        f"{'/'.join(path_parts)}/{version}"
     )
     headers = {"Accept": "application/vnd.github+json"}
 
@@ -423,12 +451,12 @@ def get_metadata(
     ]
     if not files:
         raise QSimBenchError(
-            f"No metadata files for {algorithm}_{size}_{backend}"
+            f"No metadata files for {algorithm}_{size}_{backend} for version {version}"
         )
 
     metadata: List[Any] = []
     for fname in files:
-        raw_url = f"{DATASET_URL}/{fname}"
+        raw_url = f"{DATASET_URL}/{version}/{fname}"
         r = _SESSION.get(raw_url)
         try:
             r.raise_for_status()
@@ -441,3 +469,18 @@ def get_metadata(
                 metadata.append(json.loads(line))
 
     return metadata
+
+@lru_cache
+def get_version_metadata(
+    version: str = latest
+) -> Dict[str, Any]:
+    resp=_SESSION.get(f"{DATASET_URL}/{version}/metadata.json")
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        raise QSimBenchError(f"Error fetching {f"{DATASET_URL}/{version}/metadata.json"}: {e}") from e
+    
+    return json.loads(resp.text)
+
+def get_versions() -> List[str]:
+    return versions_list
