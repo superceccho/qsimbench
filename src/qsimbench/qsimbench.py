@@ -13,6 +13,10 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
+import time
+from dotenv import load_dotenv
+
+load_dotenv(override=True)
 
 import requests
 from requests.adapters import HTTPAdapter, Retry
@@ -42,7 +46,7 @@ if GITHUB_TOKEN:
 # Retry strategy same as before
 _RETRY_STRATEGY = Retry(
     total=3,
-    backoff_factor=1,
+    backoff_factor=0.5,
     status_forcelist=[429, 500, 502, 503, 504],
     allowed_methods={"GET"},
 )
@@ -72,7 +76,7 @@ DEFAULT_CACHE_TIMEOUT = int(os.getenv("QSIMBENCH_CACHE_TIMEOUT", 30 * 24 * 60 * 
 DEFAULT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Mutable configuration
-DATASET_URL: str = DEFAULT_DATASET_URL
+DATASET_URL: str = DEFAULT_DATASET_URL.replace("tree", "raw/refs/heads")
 CACHE_DIR: Path = DEFAULT_CACHE_DIR
 CACHE_TIMEOUT: int = DEFAULT_CACHE_TIMEOUT
 
@@ -80,11 +84,25 @@ CACHE_TIMEOUT: int = DEFAULT_CACHE_TIMEOUT
 _CURSORS: Dict[Tuple[str, int, str, str], int] = {}
 _CURSORS_LOCK = threading.RLock()
 
-resp=_SESSION.get(f"{DATASET_URL}/metadata.json")
-resp.raise_for_status()
-versions_list=json.loads(resp.text)
-oldest=versions_list[0]
-latest=versions_list[len(versions_list)-1]
+def load_versions():
+    try:
+        resp=_SESSION.get(f"{DATASET_URL}/versions.json")
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        raise QSimBenchError(f"HTTP error fetching {f"{DATASET_URL}/versions.json"}: {e}") from e
+    except requests.ConnectionError as e:
+        raise QSimBenchError(f"Couldn't connect to the dataset: {e}")
+    
+    global versions_list, latest
+    versions_list=json.loads(resp.text)
+    if not versions_list:
+        raise QSimBenchError("No versions avaible")
+    latest=versions_list[len(versions_list)-1]
+
+versions_list = []
+latest = 0
+
+load_versions()
 
 # ---------------------------------------------------------------------------
 # Configuration functions
@@ -101,10 +119,21 @@ def set_dataset_url(url: str) -> None:
     """
     global DATASET_URL
     if not url.startswith(("http://", "https://")):
-        raise QSimBenchError("Dataset URL must start with 'http://' or 'https://'.")
+        raise QSimBenchError("Dataset URL must start with 'http://' or 'https://'")
     DATASET_URL = url.rstrip("/")
     logger.debug(f"Dataset URL set to: {DATASET_URL}")
 
+    load_versions()
+
+def set_github_token(token: str) -> None:
+    _SESSION.headers.update({"Authorization": f"token {token}"})
+
+def set_cache_timeout(timeout: int) -> None:
+    if not isinstance(timeout, int) or timeout < 0:
+        raise QSimBenchError("Cache timout must be a positive integer")
+    
+    global CACHE_TIMEOUT
+    CACHE_TIMEOUT = timeout
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -163,7 +192,8 @@ def _download_and_cache(
     # Serve from cache if fresh
     if cache_path.exists() and not force:
         mtime = cache_path.stat().st_mtime
-        if (mtime + CACHE_TIMEOUT) > mtime:
+        now = time.time()
+        if (now - mtime) < CACHE_TIMEOUT:
             logger.debug(f"Loading data from cache: {cache_path}")
             return [
                 json.loads(line)
@@ -173,14 +203,16 @@ def _download_and_cache(
         cache_path.unlink()
 
     logger.debug(f"Fetching data from URL: {url}")
-    resp = _SESSION.get(url)
     try:
+        resp = _SESSION.get(url)
         resp.raise_for_status()
     except requests.HTTPError as e:
         if e.response.status_code != 404:
             raise QSimBenchError(f"HTTP error fetching {url}: {e}") from e
         else:
             return []
+    except requests.ConnectionError as e:
+        raise QSimBenchError(f"Couldn't connect to the dataset: {e}")
 
     records = [
         json.loads(line) for line in resp.text.splitlines() if line.strip()
@@ -247,8 +279,7 @@ def get_outcomes(
     *,
     exact: bool = True,
     strategy: str = "sequential",
-    oldest_version: str = oldest,
-    latest_version: str = latest,
+    versions: List[str] = [latest],
     seed: Optional[int] = None,
     force: bool = False
 ) -> Dict[str, int]:
@@ -272,22 +303,16 @@ def get_outcomes(
     Raises:
         QSimBenchError: On invalid args or sampling failures.
     """
-    if shots <= 0:
+    if not isinstance(shots, int) or shots <= 0:
         raise QSimBenchError("Parameter 'shots' must be > 0.")
     if strategy not in {"sequential", "random"}:
-        raise QSimBenchError("strategy must be 'sequential' or 'random'.")
-    
-    if oldest_version not in versions_list or latest_version not in versions_list:
-        raise QSimBenchError("Non-existent version(s)")
-    
-    old_index=versions_list.index(oldest_version)
-    latest_index=versions_list.index(latest_version)
-    if old_index > latest_index:
-        raise QSimBenchError("Versions must be ordered")
+        raise QSimBenchError("Strategy must be 'sequential' or 'random'.")
+    if not versions:
+        raise QSimBenchError("At least on version") 
     
     data=[]
-    for i in range(old_index, latest_index+1):
-        new_data=_get_data(algorithm, size, backend, versions_list[i], circuit_kind, force)
+    for version in versions:
+        new_data=_get_data(algorithm, size, backend, version, circuit_kind, force)
         data.extend(new_data)
     n = len(data)
     if n == 0:
@@ -363,6 +388,9 @@ def get_index(
     kind = circuit_kind.lower()
     if kind not in {"circuit", "mirror"}:
         raise QSimBenchError("circuit_kind must be 'circuit' or 'mirror'.")
+    
+    if version not in versions_list:
+        raise QSimBenchError(f"Version {version} doesn't exist")
 
     # Convert raw URL → GitHub tree URL
     tree_url = DATASET_URL.replace("raw/refs/heads", "tree")
@@ -374,22 +402,30 @@ def get_index(
     owner, repo, _, branch, *path_parts = parts
     api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{'/'.join(path_parts)}"
     headers = {"Accept": "application/vnd.github+json"}
-
-    resp = _SESSION.get(api_url, headers=headers)
+    
     try:
+        resp = _SESSION.get(api_url, headers=headers)
         resp.raise_for_status()
     except requests.HTTPError as e:
         raise QSimBenchError(f"GitHub API error: {e}") from e
+    except requests.ConnectionError as e:
+        raise QSimBenchError(f"Couldn't connect to the dataset: {e}")
 
     items = resp.json()
     result: Dict[str, Any] = {}
 
     for item in items:
         name = item.get("name", "")
-        alg, rest = name.split("_", 1)
-        size_str, backend_ext = rest.split("_", 1)
-        size = int(size_str)
-        backend = backend_ext.rsplit(".", 1)[0]
+        name = name.replace(".jsonl", "")
+        parts= name.split("_")
+        alg = parts.pop(0)
+        while True:
+            part = parts.pop(0)
+            if part.isdigit():
+                size = int(part)
+                break
+            alg += "_" + part
+        backend = "_".join(parts)
 
         if not by_backend:
             result.setdefault(alg, {}).setdefault(size, []).append(backend)
@@ -437,12 +473,14 @@ def get_metadata(
         f"{'/'.join(path_parts)}/{version}"
     )
     headers = {"Accept": "application/vnd.github+json"}
-
-    resp = _SESSION.get(contents_url, headers=headers)
+    
     try:
+        resp = _SESSION.get(contents_url, headers=headers)
         resp.raise_for_status()
     except requests.HTTPError as e:
         raise QSimBenchError(f"GitHub API error: {e}") from e
+    except requests.ConnectionError as e:
+        raise QSimBenchError(f"Couldn't connect to the dataset: {e}")
 
     files = [
         item["name"]
@@ -457,11 +495,13 @@ def get_metadata(
     metadata: List[Any] = []
     for fname in files:
         raw_url = f"{DATASET_URL}/{version}/{fname}"
-        r = _SESSION.get(raw_url)
         try:
+            r = _SESSION.get(raw_url)
             r.raise_for_status()
         except requests.HTTPError as e:
             raise QSimBenchError(f"Error fetching {raw_url}: {e}") from e
+        except requests.ConnectionError as e:
+            raise QSimBenchError(f"Couldn't connect to the dataset: {e}")
         try:
             metadata.append(r.json())  # try full parse
         except json.JSONDecodeError:
@@ -474,11 +514,17 @@ def get_metadata(
 def get_version_metadata(
     version: str = latest
 ) -> Dict[str, Any]:
-    resp=_SESSION.get(f"{DATASET_URL}/{version}/metadata.json")
+    
+    if version not in versions_list:
+        raise QSimBenchError(f"Version {version} doesn't exist")
+    
     try:
+        resp=_SESSION.get(f"{DATASET_URL}/{version}/metadata.json")
         resp.raise_for_status()
     except requests.HTTPError as e:
         raise QSimBenchError(f"Error fetching {f"{DATASET_URL}/{version}/metadata.json"}: {e}") from e
+    except requests.ConnectionError as e:
+        raise QSimBenchError(f"Couldn't connect to the dataset: {e}")
     
     return json.loads(resp.text)
 

@@ -1,0 +1,93 @@
+{
+    "CTk":{
+        "fg_color": ["#EBEBEB", "#242424"],
+        "corner_radius": 0,
+        "border_width": 0,
+        "border_color": ["#EBEBEB", "#242424"]
+    },
+    "CTkToplevel": {
+        "fg_color": ["#EBEBEB", "#242424"],
+        "corner_radius": 0,
+        "border_width": 0,
+        "border_color": ["#EBEBEB", "#242424"]
+    },
+    "CTkFont": {
+        "family": "None",
+        "size": 18,
+        "weight": "normal",
+        "slant": "roman",
+        "underline": 0,
+        "overstrike": 0
+    },
+    "CTkFrame": {
+        "fg_color": "#242424",
+        "border_color": "#242424",
+        "border_width": 0,
+        "corner_radius": 5
+    },
+    "CTkLabel": {
+        "fg_color": "#242424",
+        "text_color": "white",
+        "corner_radius": 0
+    },
+    "CTkButton": {
+        "fg_color": "#242424",
+        "hover_color": "#525252",
+        "border_width": 2,
+        "border_color": "#525252",
+        "compound": "left",
+        "corner_radius": 5,
+        "text_color": "white",
+        "text_color_disabled": "gray"
+    },
+    "CTkEntry": {
+        "fg_color": "#242424",
+        "text_color": "white",
+        "placeholder_text_color": "#696969",
+        "border_color": "#696969",
+        "border_width": 2,
+        "corner_radius": 0
+    },
+    "CTkScrollableFrame": {
+        "label_fg_color": "#242424"
+    },
+    "CTkScrollbar": {
+        "fg_color": "#3B3B3B",
+        "button_color": "#525252",
+        "button_hover_color": "#696969",
+        "corner_radius": 5,
+        "border_spacing": 2
+    },
+    "CTkTextbox": {
+        "fg_color": "#0D0D0D",
+        "border_width": 2,
+        "border_color": "#3B3B3B",
+        "text_color": "white",
+        "scrollbar_button_color": "#525252",
+        "scrollbar_button_hover_color": "#696969",
+        "corner_radius": 0
+    },
+    "CTkOptionMenu": {
+        "fg_color": "#242424",
+        "button_color": "#242424",
+        "button_hover_color": "#525252",
+        "corner_radius": 5,
+        "text_color": "white", 
+        "text_color_disabled": "gray"
+    },
+    "DropdownMenu": {
+        "fg_color": "#242424",
+        "hover_color": "#525252",
+        "text_color": "white"
+    },
+    "CTkCheckBox": {
+        "fg_color": "#3B3B3B",
+        "hover_color": "#696969",
+        "border_color": "#696969",
+        "checkmark_color": "white",
+        "corner_radius": 5,
+        "border_width": 2,
+        "text_color": "white",
+        "text_color_disabled": "gray"
+    }
+}
