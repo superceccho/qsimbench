@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 import time
-from dotenv import load_dotenv
+from dotenv import load_dotenv, set_key
 
 load_dotenv(override=True)
 
@@ -64,7 +64,7 @@ _SESSION.mount("http://", _HTTP_ADAPTER)
 # ---------------------------------------------------------------------------
 DEFAULT_DATASET_URL = os.getenv(
     "QSIMBENCH_DATASET",
-    "https://github.com/superceccho/qsimbench-dataset/raw/refs/heads/main/dataset"
+    "https://github.com/superceccho/qsimbench-dataset/tree/main/dataset"
 ).rstrip("/")
 DEFAULT_CACHE_DIR = Path(os.getenv(
     "QSIMBENCH_CACHE_DIR",
@@ -100,14 +100,20 @@ def load_versions():
     latest=versions_list[len(versions_list)-1]
 
 versions_list = []
-latest = 0
+latest = ""
 
 load_versions()
 
 # ---------------------------------------------------------------------------
 # Configuration functions
 # ---------------------------------------------------------------------------
-def set_dataset_url(url: str) -> None:
+def edit_env_file():
+    with open(".env", "w") as file:
+        file.write(f"QSIMBENCH_DATASET={DATASET_URL}\n" \
+                    f"GITHUB_TOKEN={GITHUB_TOKEN}\n" \
+                    f"QSIMBENCH_CACHE_TIMEOUT={CACHE_TIMEOUT}")
+        
+def set_dataset_url(url: str, set_default=False) -> None:
     """
     Override the base dataset URL.
 
@@ -125,15 +131,26 @@ def set_dataset_url(url: str) -> None:
 
     load_versions()
 
-def set_github_token(token: str) -> None:
-    _SESSION.headers.update({"Authorization": f"token {token}"})
+    if set_default:
+        edit_env_file()
 
-def set_cache_timeout(timeout: int) -> None:
+def set_github_token(token: str, set_default=False) -> None:
+    global GITHUB_TOKEN
+    GITHUB_TOKEN = token
+    _SESSION.headers.update({"Authorization": f"token {GITHUB_TOKEN}"})
+
+    if set_default:
+        edit_env_file()
+
+def set_cache_timeout(timeout: int, set_default=False) -> None:
     if not isinstance(timeout, int) or timeout < 0:
         raise QSimBenchError("Cache timout must be a positive integer")
     
     global CACHE_TIMEOUT
     CACHE_TIMEOUT = timeout
+
+    if set_default:
+        edit_env_file()
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -204,7 +221,7 @@ def _download_and_cache(
 
     logger.debug(f"Fetching data from URL: {url}")
     try:
-        resp = _SESSION.get(url)
+        resp = _SESSION.get(url, timeout=1)
         resp.raise_for_status()
     except requests.HTTPError as e:
         if e.response.status_code != 404:
@@ -404,7 +421,7 @@ def get_index(
     headers = {"Accept": "application/vnd.github+json"}
     
     try:
-        resp = _SESSION.get(api_url, headers=headers)
+        resp = _SESSION.get(api_url, headers=headers, timeout=1)
         resp.raise_for_status()
     except requests.HTTPError as e:
         raise QSimBenchError(f"GitHub API error: {e}") from e
@@ -475,7 +492,7 @@ def get_metadata(
     headers = {"Accept": "application/vnd.github+json"}
     
     try:
-        resp = _SESSION.get(contents_url, headers=headers)
+        resp = _SESSION.get(contents_url, headers=headers, timeout=1)
         resp.raise_for_status()
     except requests.HTTPError as e:
         raise QSimBenchError(f"GitHub API error: {e}") from e
@@ -496,7 +513,7 @@ def get_metadata(
     for fname in files:
         raw_url = f"{DATASET_URL}/{version}/{fname}"
         try:
-            r = _SESSION.get(raw_url)
+            r = _SESSION.get(raw_url, timeout=1)
             r.raise_for_status()
         except requests.HTTPError as e:
             raise QSimBenchError(f"Error fetching {raw_url}: {e}") from e
@@ -519,7 +536,7 @@ def get_version_metadata(
         raise QSimBenchError(f"Version {version} doesn't exist")
     
     try:
-        resp=_SESSION.get(f"{DATASET_URL}/{version}/metadata.json")
+        resp=_SESSION.get(f"{DATASET_URL}/{version}/metadata.json", timeout=1)
         resp.raise_for_status()
     except requests.HTTPError as e:
         raise QSimBenchError(f"Error fetching {f"{DATASET_URL}/{version}/metadata.json"}: {e}") from e

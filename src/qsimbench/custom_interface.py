@@ -9,23 +9,22 @@ from pathlib import Path
 from datetime import datetime
 import importlib
 import sys
+import threading
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("theme.json")
 
 def display_error(mex):
     response_text.configure(state="normal")
-    response_text.delete(0.0, ctk.END)
-    response_text.configure(text_color="red")
-    response_text.insert(0.0, mex)
+    response_text.insert(ctk.END, "[ERR]" + mex, "red")
     response_text.configure(state="disabled")
+    response_text.see(ctk.END)
 
 def display_message(mex):
     response_text.configure(state="normal")
-    response_text.delete(0.0, ctk.END)
-    response_text.configure(text_color="white")
-    response_text.insert(0.0, mex)
+    response_text.insert(ctk.END, mex, "white")
     response_text.configure(state="disabled")
+    response_text.see(ctk.END)
 
 def clear_text():
     response_text.configure(state="normal")
@@ -33,8 +32,6 @@ def clear_text():
     response_text.configure(state="disabled")
 
 env_path = ".env"
-
-first_time = False
 
 def open_welcome():
     welcome_window = ctk.CTk()
@@ -92,9 +89,6 @@ def open_welcome():
                        f"GITHUB_TOKEN={token_entry.get()}\n" \
                         f"QSIMBENCH_CACHE_TIMEOUT={60 * 60 * 24 * 30}\n" \
                         "OUTPUT_DIR=output")
-        
-        global first_time
-        first_time=True
             
         welcome_window.destroy()
 
@@ -106,10 +100,10 @@ def open_welcome():
 
     welcome_window.mainloop()
 
-if not Path(env_path).exists():
+if not os.path.exists(env_path):
     open_welcome()
 
-if not Path(env_path).exists():
+if not os.path.exists(env_path):
     sys.exit(0)
 
 config = dotenv_values(env_path)
@@ -143,7 +137,7 @@ title_frame.columnconfigure(1, weight=2)
 title_frame.columnconfigure(2, weight=1)
 
 title_label = ctk.CTkLabel(title_frame, text="QSimBench", font=("DejaVu Sans", 60, "bold"))
-title_label.grid(row=0, column=1, )
+title_label.grid(row=0, column=1)
 
 logo_img = ctk.CTkImage(light_image=Image.open("assets/atom.png"), dark_image=Image.open("assets/atom_dark.png"), size=(100,100))
 logo_label = ctk.CTkLabel(title_frame, image=logo_img, compound="none")
@@ -201,6 +195,8 @@ def open_settings():
     output_button.grid(row=3, column=1)
 
     def save_func():
+        clear_text()
+
         if not dataset_entry.get():
             display_error("Enter dataset's URL")
             return
@@ -250,12 +246,13 @@ def open_settings():
 
             return True
         except Exception as e:
-            display_error(f"[ERR] {e}")
+            display_error(f"{e}")
             versions = []
             
             return False
 
     def refresh():
+        clear_text()
         if reload():
             display_message("Refreshed")
         
@@ -314,23 +311,7 @@ def open_version(event, version_name):
     metadata_label.grid(row=1, column=0)
 
     version_text = ctk.CTkTextbox(version_window, height=400, width=300, wrap="none", font=("", 15))
-    version_text.grid(row=2, column=0, rowspan=2)
-
-    try:
-        metadata = qsb.get_version_metadata(version_name)
-    except Exception as e:
-        version_text.configure(text_color="red")
-        version_text.configure(wrap="word")
-        version_text.configure(font=("", 18))
-        version_text.insert(ctk.END, f"[ERR] {e}")
-        version_text.configure(state="disabled")
-        metadata={}
-
-    metadata_json = json.dumps(metadata, indent=2)
-    for line in metadata_json.splitlines():
-        version_text.insert(ctk.END, line)
-        version_text.insert(ctk.END, "\n")
-    version_text.configure(state="disabled")
+    version_text.grid(row=2, column=0, rowspan=2, padx=5)
 
     download_img = ctk.CTkImage(dark_image=Image.open("assets/download_dark.png"), size=(30, 30))
 
@@ -341,13 +322,15 @@ def open_version(event, version_name):
         with open(path, "w") as file:
             json.dump(metadata, file, indent=2)
         
+        clear_text()
         display_message(f"Version metadata saved to {path}")
 
     metadata_button = ctk.CTkButton(version_window, text="Download version metadata", command=download_version_metadata, image=download_img)
+    metadata_button.configure(state="disabled")
     metadata_button.grid(row=4, column=0)
 
     combinations_frame = ctk.CTkScrollableFrame(version_window, label_text="Combination avaibles:\n(right click to see metadata)", fg_color="#3B3B3B", corner_radius=5, height=250)
-    combinations_frame.grid(row=2, column=1, columnspan=2, sticky="ew")
+    combinations_frame.grid(row=2, column=1, columnspan=2, sticky="ew", padx=5)
 
     def open_comb_metadata(event, comb_name, version_name):
         comb_window = ctk.CTkToplevel(version_window)
@@ -365,23 +348,43 @@ def open_version(event, version_name):
         comb_text.pack(pady=10)
 
         alg, size, back = comb_name.split("-")
-        try:
-            metadata = qsb.get_metadata(alg, size, back, version_name)
-        except Exception as e:
-            comb_text.configure(text_color="red")
-            comb_text.configure(font=("", 18))
-            comb_text.configure(wrap="word")
-            comb_text.insert(ctk.END, f"[ERR] {e}")
-            comb_text.configure(state="disabled")
-            metadata = {}
-        metadata_json = json.dumps(metadata, indent=2)
-        for line in metadata_json.splitlines():
-            comb_text.insert(ctk.END, line)
-            comb_text.insert(ctk.END, "\n")
-        comb_text.configure(state="disabled")
 
+        metadata = {}
+        
         download_comb = ctk.CTkButton(comb_window, text="Download", command=lambda: download_comb_metadata(comb_name, metadata), image=download_img)
+        download_comb.configure(state="disabled")
         download_comb.pack(pady=10)
+
+        def init_func():
+            comb_text.insert(0.0, "Loading...")
+            comb_text.configure(state="disabled")
+
+            nonlocal metadata
+
+            try:
+                metadata = qsb.get_metadata(alg, size, back, version_name)
+            except Exception as e:
+                comb_text.configure(state="normal")
+                comb_text.delete(0.0, ctk.END)
+                comb_text.configure(text_color="red")
+                comb_text.configure(font=("", 18))
+                comb_text.configure(wrap="word")
+                comb_text.insert(ctk.END, f"[ERR] {e}")
+                comb_text.configure(state="disabled")
+                return
+        
+            metadata_json = json.dumps(metadata, indent=2)
+            comb_text.configure(state="normal")
+            comb_text.delete(0.0, ctk.END)
+            for line in metadata_json.splitlines():
+                comb_text.insert(ctk.END, line)
+                comb_text.insert(ctk.END, "\n")
+            comb_text.configure(state="disabled")
+
+            download_comb.configure(state="normal")
+
+        init_thread = threading.Thread(target=init_func)
+        init_thread.start()
 
         comb_window.mainloop()
 
@@ -426,6 +429,7 @@ def open_version(event, version_name):
         with open(path, "w") as file:
             json.dump(metadata, file, indent=2)
 
+        clear_text()
         display_message(f"Run metadata saved to {path}")
 
     def download_all_metadata():
@@ -436,14 +440,49 @@ def open_version(event, version_name):
                 try:
                     metadata = qsb.get_metadata(alg, size, back, version_name)
                 except Exception as e:
-                    display_error(f"[ERR] {e}")
+                    clear_text()
+                    display_error(f"{e}")
                     return
                 download_comb_metadata(comb_name, metadata)
 
+        clear_text()
         display_message(f"Runs metadata saved to {config['OUTPUT_DIR']}/{version_name}")
 
     download_all_button = ctk.CTkButton(version_window, text="Download runs metadata", command=download_all_metadata, image=download_img)
+    download_all_button.configure(state="disabled")
     download_all_button.grid(row=4, column=1, columnspan=2)
+
+    metadata = {}
+
+    def init_func():
+        version_text.insert(0.0, "Loading...")
+        version_text.configure(state="disabled")
+        nonlocal metadata
+        try:
+            metadata = qsb.get_version_metadata(version_name)
+        except Exception as e:
+            version_text.configure(state="normal")
+            version_text.delete(0.0, ctk.END)
+            version_text.configure(text_color="red")
+            version_text.configure(wrap="word")
+            version_text.configure(font=("", 18))
+            version_text.insert(ctk.END, f"[ERR] {e}")
+            return
+
+        metadata_json = json.dumps(metadata, indent=2)
+        version_text.configure(state="normal")
+        version_text.delete(0.0, ctk.END)
+        for line in metadata_json.splitlines():
+            version_text.insert(ctk.END, line)
+            version_text.insert(ctk.END, "\n")
+
+        version_text.configure(state="disabled")
+
+        metadata_button.configure(state="normal")
+        download_all_button.configure(state="normal")
+
+    init_thread = threading.Thread(target=init_func)
+    init_thread.start()
                     
     version_window.mainloop()
 
@@ -644,6 +683,8 @@ seed_entry = ctk.CTkEntry(parameters_frame, border_width=0, width=300)
 seed_entry.grid(row=7, column=1)
 
 def get_samples():
+    clear_text()
+
     alg = alg_drop.get()
     size = size_drop.get()
     back = back_drop.get()
@@ -666,7 +707,7 @@ def get_samples():
     try:
         samples = qsb.get_outcomes(alg, int(size), back, int(shots), circuit, exact=exact, strategy=strategy, versions=versions, seed=seed, force=cache)
     except Exception as e:
-        display_error(f"[ERR] {e}")
+        display_error(f"{e}")
         return
     
     now = datetime.now()
@@ -686,6 +727,8 @@ sample_button.grid(row=8, column=0, columnspan=2)
 
 response_text = ctk.CTkTextbox(root, height=60, width=600, state="disabled", wrap="word")
 response_text.grid(row=3, column=0, columnspan=3)
+response_text.tag_config("white", foreground="white")
+response_text.tag_config("red", foreground="red")
 
 def update_versions():
     for version_button in versions_buttons:
@@ -696,7 +739,8 @@ def update_versions():
         try:
             qsb.get_index(version=version)
         except Exception as e:
-            display_error(f"[ERR] {e}")
+            clear_text()
+            display_error(f"{e}")
         
         version_button = ctk.CTkButton(versions_frame, text=version, border_width=0, corner_radius=0, fg_color="#3B3B3B", hover_color="#242424")
         version_button.configure(command=lambda b=version_button: version_select(b))
@@ -704,17 +748,26 @@ def update_versions():
         version_button.pack(fill=ctk.X)
         versions_buttons.append(version_button)
 
-try:
-    import qsimbench as qsb
-    versions = qsb.get_versions()
-except Exception as e:
-    display_error(f"[ERR] {e}")
-    versions = []
+versions = []
 
-update_versions()
+def init_func():
+    global versions
+    global qsb
+    display_message("Loading...")
+    try:
+        import qsimbench as qsb
+        versions = qsb.get_versions()
+    except Exception as e:
+        clear_text()
+        display_error(f"{e}")
+        return
 
-if first_time:
-    display_message("Welcome to QSimBench!\n" \
-    "Go to 'Settings' to finish setup")
+    update_versions()
+    clear_text()
+    display_message("Ready!")
+    
+
+init_thread = threading.Thread(target=init_func)
+init_thread.start()
 
 root.mainloop()
