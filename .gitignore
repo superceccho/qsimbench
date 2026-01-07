@@ -14,3 +14,4 @@ wheels/
 .qsimbench_cache/
 
 .env
+output

@@ -107,11 +107,6 @@ load_versions()
 # ---------------------------------------------------------------------------
 # Configuration functions
 # ---------------------------------------------------------------------------
-def edit_env_file():
-    with open(".env", "w") as file:
-        file.write(f"QSIMBENCH_DATASET={DATASET_URL}\n" \
-                    f"GITHUB_TOKEN={GITHUB_TOKEN}\n" \
-                    f"QSIMBENCH_CACHE_TIMEOUT={CACHE_TIMEOUT}")
         
 def set_dataset_url(url: str, set_default=False) -> None:
     """
@@ -132,7 +127,7 @@ def set_dataset_url(url: str, set_default=False) -> None:
     load_versions()
 
     if set_default:
-        edit_env_file()
+        set_key(".env", "QSIMBENCH_DATASET", url)
 
 def set_github_token(token: str, set_default=False) -> None:
     global GITHUB_TOKEN
@@ -140,7 +135,7 @@ def set_github_token(token: str, set_default=False) -> None:
     _SESSION.headers.update({"Authorization": f"token {GITHUB_TOKEN}"})
 
     if set_default:
-        edit_env_file()
+        set_key(".env", "GITHUB_TOKEN", token)
 
 def set_cache_timeout(timeout: int, set_default=False) -> None:
     if not isinstance(timeout, int) or timeout < 0:
@@ -150,7 +145,7 @@ def set_cache_timeout(timeout: int, set_default=False) -> None:
     CACHE_TIMEOUT = timeout
 
     if set_default:
-        edit_env_file()
+        set_key(".env", "QSIMBENCH_CACHE_TIMEOUT", timeout)
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -442,6 +437,7 @@ def get_index(
                 size = int(part)
                 break
             alg += "_" + part
+
         backend = "_".join(parts)
 
         if not by_backend:

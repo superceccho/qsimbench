@@ -402,7 +402,7 @@ def open_version(event, version_name):
             backends = size_obj[size]
             for backend in backends:
                 comb = f"{alg}-{size}-{backend}"
-                comb_button = ctk.CTkButton(combinations_frame, text=comb, border_width=0, corner_radius=0, fg_color="#3B3B3B", hover_color="#242424")
+                comb_button = ctk.CTkButton(combinations_frame, text=comb, border_width=0, corner_radius=0, fg_color="#3B3B3B", hover_color="#242424", font=("", 10))
                 comb_button.configure(command=lambda b=comb_button: selection(b))
                 comb_button.bind("<Button-3>", lambda e, c=comb: open_comb_metadata(e, c, version_name))
                 comb_button.pack(fill=ctk.X)
@@ -540,7 +540,9 @@ def update_options():
         back_drop.configure(state="disabled")
     else:
         sizes = list(super_index[alg].keys())
+        sizes = list(map(int, sizes))
         sizes.sort()
+        sizes = list(map(str, sizes))
         size_drop.configure(values=sizes)
         if size not in sizes:
             size_drop.set("")
@@ -601,7 +603,9 @@ alg_label.grid(row=0, column=0)
 
 def alg_select(alg):
     values = list(super_index[alg].keys())
+    values = list(map(int, values))
     values.sort()
+    values = list(map(str, values))
 
     size_drop.configure(values=values)
     size_drop.configure(state="normal")
