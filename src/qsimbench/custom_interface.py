@@ -31,6 +31,122 @@ def clear_text():
     response_text.delete(0.0, ctk.END)
     response_text.configure(state="disabled")
 
+class ScrollableOption(ctk.CTkToplevel):
+    def __init__(self, master, entry):
+        super().__init__(master)
+
+        self.overrideredirect(True)
+
+        x = entry.winfo_rootx()
+        y = entry.winfo_rooty() + entry.winfo_height()
+
+        self.geometry(f"+{x}+{y}")
+
+        self.frame = ctk.CTkScrollableFrame(self, width=230)
+        self.frame.pack()
+
+        self.entry = entry
+
+        self.buttons = []
+        
+    def select(self, text):
+        self.entry.configure(state="normal")
+        self.entry.delete(0, ctk.END)
+        self.entry.insert(0, text)
+        self.entry.configure(state="disabled")
+
+        self.destroy()
+
+    def set_values(self, values):
+        for button in self.buttons:
+            button.destroy()
+        
+        for value in values:
+            button = ctk.CTkButton(self.frame, text=value, border_width=0, corner_radius=0, command=lambda v=value: self.select(v))
+            button.pack(fill=ctk.X)
+            self.buttons.append(button)
+
+class DropDown(ctk.CTkEntry):
+    def __init__(self, master, width = 140, height = 28, corner_radius = None, border_width = None, bg_color = "transparent", fg_color = None, border_color = None, text_color = None, font = None, state = ctk.NORMAL, command = None, **kwargs):
+        super().__init__(master, width, height, corner_radius, border_width, bg_color, fg_color, border_color, text_color, None, None, None, font, ctk.DISABLED, **kwargs)
+
+        self.bind("<Button-1>", lambda event: self.open_dropdown(master))
+
+        self.values=[]
+        self.buttons=[]
+        self.frame = None
+
+        self.reset()
+
+        self.set_state(state)
+
+        self.command = command
+
+    def open_dropdown(self, master):
+        if self.frame:
+            self.frame.destroy()
+            self.frame = None
+            return
+        
+        if self.state == "disabled":
+            return
+
+        self.frame = ctk.CTkToplevel(master)
+        self.frame.overrideredirect(True)
+
+        x = self.winfo_rootx()
+        y = self.winfo_rooty() + self.winfo_height()
+
+        self.frame.geometry(f"+{x}+{y}")
+
+        options = ctk.CTkScrollableFrame(self.frame, width=self.winfo_width()-20)
+        options.pack()
+
+        def selection(value):
+            self.configure(state="normal")
+            self.delete(0, ctk.END)
+            self.insert(0, value)
+            self.configure(state="disabled")
+
+            self.frame.destroy()
+            self.frame = None
+
+            if self.command:
+                self.command()
+
+        for value in self.values:
+            button = ctk.CTkButton(options, text=value, border_width=0, corner_radius=0, command=lambda v=value: selection(v))
+            button.pack(fill=ctk.X)
+            self.buttons.append(button)
+
+    def get_value(self):
+        return self.get() if self.get() != "#click to select" else None
+    
+    def set_values(self, values):
+        self.values = values
+
+    def reset(self):
+        self.configure(state="normal")
+        self.delete(0, ctk.END)
+        self.insert(0, "#click to select")
+        self.configure(state="disabled")
+
+    def set_state(self, state):
+        if state not in ["normal", "disabled"]:
+            raise RuntimeError("State must be 'normal' or 'disabled'")
+        
+        if self.frame:
+            self.frame.destroy()
+            self.frame = None
+
+        if state == "disabled":
+            self.configure(text_color="#696969")
+            self.reset()
+        else:
+            self.configure(text_color="white")
+
+        self.state = state
+
 env_path = ".env"
 
 def open_welcome():
@@ -310,8 +426,8 @@ def open_version(event, version_name):
     metadata_label = ctk.CTkLabel(version_window, text="Version metadata:")
     metadata_label.grid(row=1, column=0)
 
-    version_text = ctk.CTkTextbox(version_window, height=400, width=300, wrap="none", font=("", 15))
-    version_text.grid(row=2, column=0, rowspan=2, padx=5)
+    version_text = ctk.CTkTextbox(version_window, height=350, width=280, wrap="none", font=("", 15))
+    version_text.grid(row=2, column=0, padx=5)
 
     download_img = ctk.CTkImage(dark_image=Image.open("assets/download_dark.png"), size=(30, 30))
 
@@ -327,12 +443,30 @@ def open_version(event, version_name):
 
     metadata_button = ctk.CTkButton(version_window, text="Download version metadata", command=download_version_metadata, image=download_img)
     metadata_button.configure(state="disabled")
-    metadata_button.grid(row=4, column=0)
+    metadata_button.grid(row=3, column=0)
 
-    combinations_frame = ctk.CTkScrollableFrame(version_window, label_text="Combination avaibles:\n(right click to see metadata)", fg_color="#3B3B3B", corner_radius=5, height=250)
-    combinations_frame.grid(row=2, column=1, columnspan=2, sticky="ew", padx=5)
+    def open_comb_metadata():
+        alg = alg_entry.get_value()
+        size = size_entry.get_value()
+        back = back_entry.get_value()
 
-    def open_comb_metadata(event, comb_name, version_name):
+        if not alg or alg == "ALL":
+            clear_text()
+            display_error("Choose ONE algorithm")
+            return
+        
+        if not size or size == "ALL":
+            clear_text()
+            display_error("Choose ONE size")
+            return
+        
+        if not back or back == "ALL":
+            clear_text()
+            display_error("Choose ONE backend")
+            return
+        
+        comb_name = f"{alg}_{size}_{back}"
+
         comb_window = ctk.CTkToplevel(version_window)
         comb_window.geometry(f"400x500+{screen_w//2 - 200}+{screen_h//2 - 250 - 20}")
         comb_window.title(comb_name)
@@ -341,13 +475,11 @@ def open_version(event, version_name):
         comb_window.grab_set()
         comb_window.focus_set()
 
-        comb_label = ctk.CTkLabel(comb_window, text=f"{comb_name} run metadata:", font=("", 18, "bold"))
+        comb_label = ctk.CTkLabel(comb_window, text=f"{comb_name}\nrun metadata:", font=("", 18, "bold"))
         comb_label.pack(pady=10)
 
         comb_text = ctk.CTkTextbox(comb_window, width=300, height=375, font=("", 15), wrap="none")
         comb_text.pack(pady=10)
-
-        alg, size, back = comb_name.split("-")
 
         metadata = {}
         
@@ -388,39 +520,47 @@ def open_version(event, version_name):
 
         comb_window.mainloop()
 
-    def selection(button):
-        if button._fg_color == "#3B3B3B":
-            button.configure(fg_color="#242424")
-        else:
-            button.configure(fg_color="#3B3B3B")
+    combination_frame = ctk.CTkFrame(version_window, fg_color="#3B3B3B")
+    combination_frame.grid(row=2, column=1, columnspan=2, padx=5, pady=5)
+
+    combination_frame.rowconfigure(0, weight=1)
+    combination_frame.rowconfigure(1, weight=1)
+    combination_frame.rowconfigure(2, weight=1)
+    combination_frame.rowconfigure(3, weight=1)
+
+    comb_label = ctk.CTkLabel(combination_frame, text="Runs metadata:", corner_radius=5)
+    comb_label.grid(row=0, column=0, columnspan=2, pady=5)
 
     index = qsb.get_index(version=version_name)
-    comb_buttons = []
+    algs = ["ALL"]
+    sizes = []
+    backs = ["ALL"]
+
     for alg in index:
-        size_obj = index[alg]
-        for size in size_obj:
-            backends = size_obj[size]
-            for backend in backends:
-                comb = f"{alg}-{size}-{backend}"
-                comb_button = ctk.CTkButton(combinations_frame, text=comb, border_width=0, corner_radius=0, fg_color="#3B3B3B", hover_color="#242424", font=("", 10))
-                comb_button.configure(command=lambda b=comb_button: selection(b))
-                comb_button.bind("<Button-3>", lambda e, c=comb: open_comb_metadata(e, c, version_name))
-                comb_button.pack(fill=ctk.X)
-                comb_buttons.append(comb_button)
+        if alg not in algs:
+            algs.append(alg)
+        for size in index[alg]:
+            if size not in sizes:
+                sizes.append(size)
+            for back in index[alg][size]:
+                if back not in backs:
+                    backs.append(back)
 
-    def select_all():
-        for button in comb_buttons:
-            button.configure(fg_color="#242424")
+    sizes.sort() 
+    sizes = list(map(str, sizes))
+    sizes.insert(0, "ALL")
 
-    select_all_button = ctk.CTkButton(version_window, text="Select all", command=select_all)
-    select_all_button.grid(row=3, column=1)
+    alg_entry = DropDown(combination_frame, width=250, border_width=0)
+    alg_entry.set_values(algs)
+    alg_entry.grid(row=1, column=0, padx=5, pady=15)
 
-    def deselect_all():
-        for button in comb_buttons:
-            button.configure(fg_color="#3B3B3B")
+    size_entry = DropDown(combination_frame, width=250, border_width=0)
+    size_entry.set_values(sizes)
+    size_entry.grid(row=2, column=0, padx=5, pady=15)
 
-    deselect_all_button = ctk.CTkButton(version_window, text="Deselect all", command=deselect_all)
-    deselect_all_button.grid(row=3, column=2)
+    back_entry = DropDown(combination_frame, width=250, border_width=0)
+    back_entry.set_values(backs)
+    back_entry.grid(row=3, column=0, padx=5, pady=15)
 
     def download_comb_metadata(comb_name, metadata):
         Path(f"{config['OUTPUT_DIR']}/{version_name}").mkdir(parents=True, exist_ok=True)
@@ -432,25 +572,56 @@ def open_version(event, version_name):
         clear_text()
         display_message(f"Run metadata saved to {path}")
 
-    def download_all_metadata():
-        for comb in comb_buttons:
-            if comb._fg_color == "#242424":
-                comb_name = comb.cget("text")
-                alg, size, back = comb_name.split("-")
-                try:
-                    metadata = qsb.get_metadata(alg, size, back, version_name)
-                except Exception as e:
-                    clear_text()
-                    display_error(f"{e}")
-                    return
-                download_comb_metadata(comb_name, metadata)
+    open_metadata_button = ctk.CTkButton(version_window, text="Show run\nmetadata", command=open_comb_metadata)
+    open_metadata_button.grid(row=3, column=1, padx=5, pady=5)
 
-        clear_text()
-        display_message(f"Runs metadata saved to {config['OUTPUT_DIR']}/{version_name}")
+    def download_all_comb_metadata():
+        alg_choice = alg_entry.get_value()
+        size_choice = size_entry.get_value()
+        back_choice = back_entry.get_value()
 
-    download_all_button = ctk.CTkButton(version_window, text="Download runs metadata", command=download_all_metadata, image=download_img)
-    download_all_button.configure(state="disabled")
-    download_all_button.grid(row=4, column=1, columnspan=2)
+        if not alg_choice or not size_choice or not back_choice:
+            clear_text()
+            display_error("Select every parameter")
+            return
+        
+        download_runs_metadata_button.configure(state="disabled")
+        
+        selected_algs = [alg for alg in algs if alg != "ALL"] if alg_choice == "ALL" else [alg_choice]
+        selected_sizes = [size for size in sizes if size != "ALL"] if size_choice == "ALL" else [size_choice]
+        selected_backs = [back for back in backs if back != "ALL"] if back_choice == "ALL" else [back_choice]
+
+        comb_count = len(selected_algs) * len(selected_sizes) * len(selected_backs)
+        bar_step = 1 / comb_count
+
+        progress_bar = ctk.CTkProgressBar(version_window, width=300, height=15)
+        progress_bar.set(0)
+        progress_bar.grid(row=4, column=1, columnspan=2)
+
+        def thread_func():
+            for alg in selected_algs:
+                for size in selected_sizes:
+                    for back in selected_backs:
+                        try:
+                            metadata = qsb.get_metadata(alg, size, back, version_name)
+                            download_comb_metadata(f"{alg}_{size}_{back}", metadata)
+                        except Exception as e:
+                            clear_text()
+                            display_error(str(e))
+
+                        progress_bar.set(progress_bar.get() + bar_step)
+            
+            download_runs_metadata_button.configure(state="normal")
+            progress_bar.destroy()
+
+            clear_text()
+            display_message(f"All metadata downloaded to: {config['OUTPUT_DIR']}/{version_name}")
+
+        thread = threading.Thread(target=thread_func)
+        thread.start()
+
+    download_runs_metadata_button = ctk.CTkButton(version_window, text="Download runs\nmetadata", command=download_all_comb_metadata)
+    download_runs_metadata_button.grid(row=3, column=2)
 
     metadata = {}
 
@@ -479,7 +650,6 @@ def open_version(event, version_name):
         version_text.configure(state="disabled")
 
         metadata_button.configure(state="normal")
-        download_all_button.configure(state="normal")
 
     init_thread = threading.Thread(target=init_func)
     init_thread.start()
@@ -509,52 +679,53 @@ def update_options():
                             super_index[alg][size].append(backend)
 
     if not super_index:
-        alg_drop.set("")
-        alg_drop.configure(state="disabled")
+        
+        alg_drop.reset()
+        alg_drop.set_state("disabled")
 
-        size_drop.set("")
-        size_drop.configure(state="disabled")
+        size_drop.reset()
+        size_drop.set_state("disabled")
 
-        back_drop.set("")
-        back_drop.configure(state="disabled")
+        back_drop.reset()
+        back_drop.set_state("disabled")
 
         return
     
     values = list(algs)
     values.sort()
     
-    alg_drop.configure(values=values)
-    alg_drop.configure(state="normal")
+    alg_drop.set_values(values)
+    alg_drop.set_state("normal")
 
-    alg = alg_drop.get()
-    size = size_drop.get()
-    back = back_drop.get()
+    alg = alg_drop.get_value()
+    size = size_drop.get_value()
+    back = back_drop.get_value()
 
     if alg not in values:
-        alg_drop.set("")
+        alg_drop.reset()
 
-        size_drop.set("")
-        size_drop.configure(state="disabled")
+        size_drop.reset()
+        size_drop.set_state("disabled")
 
-        back_drop.set("")
-        back_drop.configure(state="disabled")
+        back_drop.reset()
+        back_drop.set_state("disabled")
     else:
         sizes = list(super_index[alg].keys())
         sizes = list(map(int, sizes))
         sizes.sort()
         sizes = list(map(str, sizes))
-        size_drop.configure(values=sizes)
+        size_drop.set_values(sizes)
         if size not in sizes:
-            size_drop.set("")
+            size_drop.reset()
 
-            back_drop.set("")
-            back_drop.configure(state="disabled")
+            back_drop.reset()
+            back_drop.set_state("disabled")
         else:
             backs = super_index[alg][size]
             backs.sort()
-            back_drop.configure(values=backs)
+            back_drop.set_values(backs)
             if back not in backs:
-                back_drop.set("")
+                back_drop.reset()
 
 def version_select(button):
     if button._fg_color == "#3B3B3B":
@@ -601,57 +772,56 @@ parameters_frame.columnconfigure(1, weight=1)
 alg_label = ctk.CTkLabel(parameters_frame, text="Algorithm:", fg_color="#3B3B3B")
 alg_label.grid(row=0, column=0)
 
-def alg_select(alg):
+def alg_select():
+    alg = alg_drop.get_value()
     values = list(super_index[alg].keys())
     values = list(map(int, values))
     values.sort()
     values = list(map(str, values))
 
-    size_drop.configure(values=values)
-    size_drop.configure(state="normal")
+    size_drop.set_values(values)
+    size_drop.set_state("normal")
 
-    size = size_drop.get()
-    back = back_drop.get()
+    size = size_drop.get_value()
+    back = back_drop.get_value()
 
     if size not in values:
-        size_drop.set("")
+        size_drop.reset()
         
-        back_drop.set("")
-        back_drop.configure(state="disabled")
+        back_drop.reset()
+        back_drop.set_state("disabled")
     else:
         backs = super_index[alg][size]
         backs.sort()
-        back_drop.configure(values=backs)
+        back_drop.set_values(backs)
         if back not in backs:
-            back_drop.set("")
+            back_drop.reset()
 
-alg_drop = ctk.CTkOptionMenu(parameters_frame, values=[], command=alg_select, state="disabled", width=300, dynamic_resizing=False)
-alg_drop.set("")
+alg_drop = DropDown(parameters_frame, width=300, border_width=0, state="disabled", command=alg_select)
 alg_drop.grid(row=0, column=1)
 
 size_label = ctk.CTkLabel(parameters_frame, text="Size:", fg_color="#3B3B3B")
 size_label.grid(row=1, column=0)
 
-def size_select(size):
-    alg = alg_drop.get()
+def size_select():
+    alg = alg_drop.get_value()
+    size = size_drop.get_value()
     values = super_index[alg][size]
     values.sort()
 
-    back_drop.configure(values=values)
-    back_drop.configure(state="normal")
+    back_drop.set_values(values)
+    back_drop.set_state("normal")
 
-    if back_drop.get() not in values:
-        back_drop.set("")
+    if back_drop.get_value() not in values:
+        back_drop.reset
 
-size_drop = ctk.CTkOptionMenu(parameters_frame, state="disabled", command=size_select, width=300, dynamic_resizing=False)
-size_drop.set("")
+size_drop = DropDown(parameters_frame, width=300, border_width=0, state="disabled", command=size_select)
 size_drop.grid(row=1, column=1)
 
 back_label = ctk.CTkLabel(parameters_frame, text="Backend:", fg_color="#3B3B3B")
 back_label.grid(row=2, column=0)
 
-back_drop = ctk.CTkOptionMenu(parameters_frame, state="disabled", width=300, dynamic_resizing=False)
-back_drop.set("")
+back_drop = DropDown(parameters_frame, width=300, border_width=0, state="disabled")
 back_drop.grid(row=2, column=1)
 
 shots_label = ctk.CTkLabel(parameters_frame, text="Shots count:", fg_color="#3B3B3B")
@@ -689,9 +859,9 @@ seed_entry.grid(row=7, column=1)
 def get_samples():
     clear_text()
 
-    alg = alg_drop.get()
-    size = size_drop.get()
-    back = back_drop.get()
+    alg = alg_drop.get_value()
+    size = size_drop.get_value()
+    back = back_drop.get_value()
     shots = shots_entry.get()
     exact = exact_check.get()
     cache = cache_check.get()

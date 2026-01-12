@@ -89,5 +89,12 @@
         "border_width": 2,
         "text_color": "white",
         "text_color_disabled": "gray"
+    },
+    "CTkProgressBar": {
+        "border_color": "#3B3B3B",
+        "fg_color": "#242424",
+        "progress_color": "#C4C4C4",
+        "corner_radius": 5,
+        "border_width": 2
     }
 }
